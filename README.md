@@ -13,7 +13,7 @@ It will then also ping the unit (for up to 2 mins) until it gets a reply.
 
 ### Companion Tools
 
-* [C++Builder software] c++ builder v6 to compile/create the .exe
+* [Borland C++Builder software] Borland C++ Builder v6 to compile and create the .exe
 
 ### Contributors
 

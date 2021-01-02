@@ -7,6 +7,7 @@
 #include <time.h>
 #include <stdio.h>
 #include <fastmath.h>
+//#include <stdio.h>
 
 #pragma hdrstop
 
@@ -14,6 +15,8 @@
 
 #define BROADCAST_WOL_IP		"255.255.255.255"
 #define BROADCAST_WOL_PORT		9
+
+#define WOL_REPEAT_SECS       8.0
 
 #define MIN_WAV_SIZE          44 // bytes
 
@@ -115,8 +118,8 @@ void __fastcall TForm1::FormCreate(TObject *Sender)
 		MessageDlg(s, mtError, TMsgDlgButtons() << mbCancel, 0);
 		Close();
 	}
-	// Memo1->Lines->Add(IntToHex(wsaData.wVersion, 4) + " " + IntToHex(wsaData.wHighVersion, 4));
-	// LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2
+	//printfCommMessage("%04X.%04X", wsaData.wVersion, wsaData.wHighVersion);
+	//LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2
 
 	{	// first try to load the external file. if the external file is not present then use the built-in resourced file
 		dest_detected_wav.resize(0);
@@ -172,11 +175,15 @@ void __fastcall TForm1::FormCreate(TObject *Sender)
 		}
 	}
 
+	Timer1->Enabled = true;
+
 	::PostMessage(this->Handle, WM_INIT_GUI, 0, 0);
 }
 
 void __fastcall TForm1::FormDestroy(TObject *Sender)
 {
+	Timer1->Enabled = false;
+	
 	if (thread != NULL)
 	{
 		thread->Terminate();
@@ -614,6 +621,24 @@ void __fastcall TForm1::WMInitGUI(TMessage &msg)
 		wakeyWakey(0);
 }
 
+void __fastcall TForm1::WMUpdateStatus(TMessage &msg)
+{
+	const int index = msg.WParam;
+
+	switch (index)
+	{
+		case 0:
+			{
+				const double secs = WOL[index].hires_timer.secs(false);
+				StatusLabel->Caption = IntToStr(IROUND(secs)) + " seconds      ";
+				StatusLabel->Update();
+			}
+			break;
+		default:
+			break;
+	}
+}
+
 void __fastcall TForm1::loadSettings()
 {
 	int i;
@@ -669,6 +694,75 @@ void __fastcall TForm1::saveSettings()
 	delete ini;
 }
 
+void __fastcall TForm1::clearCommMessages()
+{
+	CCriticalSection cs(m_messages.cs);
+	m_messages.list.resize(0);
+}
+
+unsigned int __fastcall TForm1::commMessagesCount()
+{
+	CCriticalSection cs(m_messages.cs);
+	return m_messages.list.size();
+}
+
+void TForm1::printfCommMessage(const char *fmt, ...)
+{
+	if (fmt == NULL)
+		return;
+
+	va_list ap;
+	char tmp;
+
+	va_start(ap, fmt);
+		int buf_size = vsnprintf(&tmp, 0, fmt, ap);
+	va_end(ap);
+
+	if (buf_size == 0)
+		return;
+
+	if (buf_size == -1)
+		buf_size = 512;
+
+	char *buf = new char [buf_size + 1];
+	if (buf == NULL)
+		return;
+
+	va_start(ap, fmt);
+		vsnprintf(buf, buf_size + 1, fmt, ap);
+	va_end(ap);
+
+	String s = String(buf);
+
+	delete buf;
+
+	if (!s.IsEmpty())
+	{
+		CCriticalSection cs(m_messages.cs);
+		m_messages.list.push_back(s);
+	}
+}
+
+void __fastcall TForm1::pushCommMessage(String s)
+{
+	if (!s.IsEmpty())
+	{
+		CCriticalSection cs(m_messages.cs);
+		m_messages.list.push_back(s);
+	}
+}
+
+String __fastcall TForm1::pullCommMessage()
+{
+	String s;
+	CCriticalSection cs(m_messages.cs);
+	if (!m_messages.list.empty())
+	{
+		s = m_messages.list[0];
+		m_messages.list.erase(m_messages.list.begin() + 0);
+	}
+	return s;
+}
 
 void __fastcall TForm1::FormKeyDown(TObject *Sender, WORD &Key,
       TShiftState Shift)
@@ -680,7 +774,6 @@ void __fastcall TForm1::FormKeyDown(TObject *Sender, WORD &Key,
 			Key = 0;
 			//if (thread)
 			//{
-			//	::PostMessage(this->Handle, WM_CAPTURE_STOP, 0, 0);
 			//}
 			//else
 				Close();
@@ -801,13 +894,13 @@ void __fastcall TForm1::addMemoLine(String s)
 {
 	if (s.IsEmpty())
 	{
-		Memo1->Lines->Add(s);
+		m_messages.list.push_back(s);
 	}
 	else
 	{
 		//String dt_str = FormatDateTime("yyyy mm dd hh:nn:ss.zzz", Now());
 		String dt_str = FormatDateTime("hh:nn:ss.zzz", Now());
-		Memo1->Lines->Add(dt_str + "  " + s);
+		m_messages.list.push_back(dt_str + "  " + s);
 	}
 }
 
@@ -975,16 +1068,6 @@ bool __fastcall TForm1::wolSend(String mac_str1, String mac_str2, int index, int
 
 		sent = true;
 
-		switch (index)
-		{
-			case 0:
-				StatusLabel->Caption = "0 seconds      ";
-				StatusLabel->Update();
-				break;
-			default:
-				break;
-		}
-
 		for (int i = 0; i < repeat_broadcasts; i++)
 		{
 			String s1;
@@ -1058,32 +1141,25 @@ void __fastcall TForm1::pingProcess()
 		if (!thread)
 			return;
 
-		if (WOL[index].secs >= 0)
+		if (WOL[index].secs >= 0.0)
 		{
 			const double secs = WOL[index].hires_timer.secs(false);
 			const double diff = secs - WOL[index].secs;
-			if (diff >= 1)
+
+			if (diff >= 1.0)
 			{	// update on-screen timer
-				WOL[index].secs += 1;
-				switch (index)
-				{
-					case 0:
-						StatusLabel->Caption = IntToStr(IROUND(secs)) + " seconds      ";
-						StatusLabel->Update();
-						break;
-					default:
-						break;
-				}
+				WOL[index].secs += 1.0;
+				::PostMessage(this->Handle, WM_UPDATE_STATUS, index, 0);
 			}
 
-			if (ping[index].stage != PING_STAGE_NONE && secs >= 120)
+			if (ping[index].stage != PING_STAGE_NONE && secs >= 120.0)
 			{	// been pinging for 2 minutes .. time to give up
 				addMemoLine("stopped pinging");
 				finish(index);
 			}
 
-			// send another WOL incase the previous ones were not heard or seen
-			if (WOL[index].repeat_timer.secs(false) >= 5)
+			// send another WOL incase the previous ones weren't heard
+			if (WOL[index].repeat_timer.secs(false) >= WOL_REPEAT_SECS)
 				if (wolSend(WOL[index].mac1, WOL[index].mac2, index, 1))
 					WOL[index].repeat_timer.mark();
 		}
@@ -1341,7 +1417,8 @@ void __fastcall TForm1::pingProcess()
 						if (dest_detected_wav.size() > 0)
 						{
 							DWORD flags = SND_MEMORY | SND_NODEFAULT | SND_NOWAIT;
-							flags |= CloseOnWakeCheckBox->Checked ? SND_SYNC : SND_ASYNC;
+							flags |= SND_ASYNC;
+							//flags |= CloseOnWakeCheckBox->Checked ? SND_SYNC : SND_ASYNC;
 							if (::PlaySound(&dest_detected_wav[0], NULL, flags) == FALSE)
 								addMemoLine("play sound error: " + IntToStr((int)GetLastError()));
 						}
@@ -1404,6 +1481,16 @@ void __fastcall TForm1::wakeyWakey(const int index)
 		WOL[index].hires_timer.mark();
 		WOL[index].secs = 0;
 
+		switch (index)
+		{
+			case 0:
+				StatusLabel->Caption = "0 seconds      ";
+				StatusLabel->Update();
+				break;
+			default:
+				break;
+		}
+
 		if (pingStart(IPEdit->Text, index))
 		{
 			MACEditA->Enabled  = false;
@@ -1422,5 +1509,20 @@ void __fastcall TForm1::WOLButtonClick(TObject *Sender)
 void __fastcall TForm1::Memo1DblClick(TObject *Sender)
 {
 	Memo1->Clear();
+}
+
+void __fastcall TForm1::Timer1Timer(TObject *Sender)
+{
+	{
+		int num_done = 0;
+		int num;
+		while ((num = commMessagesCount()) > 0)
+		{
+			String s = pullCommMessage();
+			Memo1->Lines->Add(s);
+			if (++num_done >= 10)	// max of 10 lines in one go - to give time for the rest of the system to do it's thing
+				break;
+		}
+	}
 }
 

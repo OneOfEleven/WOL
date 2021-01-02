@@ -6,6 +6,7 @@
 #include <Controls.hpp>
 #include <StdCtrls.hpp>
 #include <Forms.hpp>
+#include <ExtCtrls.hpp>
 
 #define VC_EXTRALEAN
 #define WIN32_EXTRA_LEAN
@@ -25,9 +26,10 @@
 #include "CriticalSection.h"
 #include "HighResolutionTick.h"
 
-#define WM_INIT_GUI		(WM_USER + 100)
+#define WM_INIT_GUI        (WM_USER + 100)
+#define WM_UPDATE_STATUS   (WM_USER + 101)
 
-#define MAX_DEST        2
+#define MAX_DEST 2
 
 struct TVersion
 {
@@ -104,7 +106,8 @@ public:
 	__fastcall CThread(mainForm_threadProcess process, TThreadPriority priority, bool start) : TThread(!start)
 	{
 		m_process       = process;
-		m_sync          = true;
+		m_sync          = false;
+		//m_sync          = true;
 		FreeOnTerminate = false;
 		Priority        = priority;
 	}
@@ -135,6 +138,7 @@ __published:	// IDE-managed Components
 	TMemo *Memo1;
 	TCheckBox *WakeOnStartCheckBox;
 	TCheckBox *CloseOnWakeCheckBox;
+	TTimer *Timer1;
 	void __fastcall FormCreate(TObject *Sender);
 	void __fastcall FormDestroy(TObject *Sender);
 	void __fastcall FormClose(TObject *Sender, TCloseAction &Action);
@@ -142,6 +146,7 @@ __published:	// IDE-managed Components
 			 TShiftState Shift);
 	void __fastcall WOLButtonClick(TObject *Sender);
 	void __fastcall Memo1DblClick(TObject *Sender);
+	void __fastcall Timer1Timer(TObject *Sender);
 
 private:	// User declarations
 	String work_dir;
@@ -153,6 +158,12 @@ private:	// User declarations
 	std::vector <uint8_t> dest_detected_wav;
 
 	CHighResolutionTick startup_timer;
+
+	struct
+	{
+		CCriticalSectionObj cs;
+		std::vector <String> list;
+	} m_messages;
 
 	WSADATA wsaData;
 
@@ -202,10 +213,17 @@ private:	// User declarations
 	void __fastcall loadSettings();
 	void __fastcall saveSettings();
 
+	void __fastcall clearCommMessages();
+	unsigned int __fastcall commMessagesCount();
+	void printfCommMessage(const char *fmt, ...);
+	void __fastcall pushCommMessage(String s);
+	String __fastcall pullCommMessage();
+
 	void __fastcall initGUI();
 
 	void __fastcall WMWindowPosChanging(TWMWindowPosChanging &msg);
 	void __fastcall WMInitGUI(TMessage &msg);
+	void __fastcall WMUpdateStatus(TMessage &msg);
 
 	void __fastcall addMemoLine(String s);
 
@@ -234,6 +252,7 @@ protected:
 	BEGIN_MESSAGE_MAP
 		VCL_MESSAGE_HANDLER(WM_WINDOWPOSCHANGING, TWMWindowPosMsg, WMWindowPosChanging);
 		VCL_MESSAGE_HANDLER(WM_INIT_GUI, TMessage, WMInitGUI);
+		VCL_MESSAGE_HANDLER(WM_UPDATE_STATUS, TMessage, WMUpdateStatus);
 	END_MESSAGE_MAP(TForm)
 	#pragma option pop
 

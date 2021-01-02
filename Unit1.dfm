@@ -147,4 +147,11 @@ object Form1: TForm1
     Caption = 'Close on Wake'
     TabOrder = 6
   end
+  object Timer1: TTimer
+    Enabled = False
+    Interval = 100
+    OnTimer = Timer1Timer
+    Left = 64
+    Top = 144
+  end
 end

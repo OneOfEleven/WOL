@@ -1070,17 +1070,15 @@ bool __fastcall TForm1::wolSend(String mac_str1, String mac_str2, int index, int
 
 		for (int i = 0; i < repeat_broadcasts; i++)
 		{
-			String s1;
-			s1.printf("WOL %02X:%02X:%02X:%02X:%02X:%02X port-%u .. ", mac_addr[mac][0], mac_addr[mac][1], mac_addr[mac][2], mac_addr[mac][3], mac_addr[mac][4], mac_addr[mac][5], ntohs(addr.sin_port));
+			String s;
+			s.printf("tx WOL %02X:%02X:%02X:%02X:%02X:%02X port-%u", mac_addr[mac][0], mac_addr[mac][1], mac_addr[mac][2], mac_addr[mac][3], mac_addr[mac][4], mac_addr[mac][5], ntohs(addr.sin_port));
 			res = sendto(sock, packet, k, 0, (struct sockaddr *)&addr, sizeof(addr));
 			if (res < 0)
 			{
 				const int err = WSAGetLastError();
-				String s = s1 + "error [" + IntToStr(err) + "] " + errorToStr(err);
-				addMemoLine(s);
+				s += "error [" + IntToStr(err) + "] " + errorToStr(err);
 			}
-			else
-				addMemoLine(s1 + "sent");
+			addMemoLine(s);
 		}
 
 		closesocket(sock);
@@ -1207,7 +1205,7 @@ void __fastcall TForm1::pingProcess()
 				if (ping[index].sock == INVALID_SOCKET)
 				{
 					const int err = WSAGetLastError();
-					String s2 = "ping tx socket create error [" + IntToStr(err) + "] " + errorToStr(err);
+					String s2 = "tx ping socket create error [" + IntToStr(err) + "] " + errorToStr(err);
 					addMemoLine(s2);
 					finish(index);
 					break;
@@ -1245,17 +1243,19 @@ void __fastcall TForm1::pingProcess()
 
 					const int num_bytes = sizeof(ICMPheader) + ping[index].message_size;
 
-					String s = "ping tx " + ping[index].ip + " " + IntToStr(ping[index].packets_tx) + " " + IntToStr(num_bytes) + " .. ";
+					String s = "tx ping " + ping[index].ip + " " + IntToStr(ping[index].packets_tx) + " " + IntToStr(num_bytes);
 
 					const int res = sendto(ping[index].sock, &ping[index].tx_buffer[0], num_bytes, 0, (SOCKADDR *)&ping[index].dest, sizeof(SOCKADDR_IN));
 					if (res == SOCKET_ERROR || res != num_bytes)
 					{
 						const int err = WSAGetLastError();
-						String s2 = s + "error [" + IntToStr(err) + "] " + errorToStr(err);
-						addMemoLine(s2);
+						s += " .. error [" + IntToStr(err) + "] " + errorToStr(err);
+						addMemoLine(s);
 						finish(index);
 						break;
 					}
+					else
+						addMemoLine(s);
 
 					// save the time at which the ICMP echo message was sent
 					ping[index].hires_timer.mark();
@@ -1263,8 +1263,6 @@ void __fastcall TForm1::pingProcess()
 					ping[index].packets_tx++;
 
 					ping[index].stage = PING_STAGE_RX;
-
-					addMemoLine(s + "sent");
 				}
 
 			case PING_STAGE_RX:	// waiting for pong
@@ -1289,7 +1287,7 @@ void __fastcall TForm1::pingProcess()
 					if (res == SOCKET_ERROR || res < 0)
 					{
 						const int err = WSAGetLastError();
-						String s2 = "ping rx select error [" + IntToStr(err) + "] " + errorToStr(err);
+						String s2 = "rx ping select error [" + IntToStr(err) + "] " + errorToStr(err);
 						addMemoLine(s2);
 						finish(index);
 						break;
@@ -1299,7 +1297,7 @@ void __fastcall TForm1::pingProcess()
 					{
 						if (ping[index].hires_timer.millisecs(false) >= ping[index].timeout_ms)	// timed out ?
 						{
-							//addMemoLine("ping rx time out 1");
+							//addMemoLine("rx ping time out 1");
 							ping[index].stage = (ping[index].count < 0 || ping[index].packets_tx < ping[index].count) ? PING_STAGE_TX : PING_STAGE_DONE;
 						}
 						break;
@@ -1309,7 +1307,7 @@ void __fastcall TForm1::pingProcess()
 					{
 						if (ping[index].hires_timer.millisecs(false) >= ping[index].timeout_ms)	// timed out ?
 						{
-							//addMemoLine("ping rx time out 1");
+							//addMemoLine("rx ping time out 1");
 							ping[index].stage = (ping[index].count < 0 || ping[index].packets_tx < ping[index].count) ? PING_STAGE_TX : PING_STAGE_DONE;
 						}
 						break;
@@ -1319,7 +1317,7 @@ void __fastcall TForm1::pingProcess()
 					if (res == SOCKET_ERROR || res < 0)
 					{
 						const int err = WSAGetLastError();
-						String s2 = "ping rx recvfrom error [" + IntToStr(err) + "] " + errorToStr(err);
+						String s2 = "rx ping recvfrom error [" + IntToStr(err) + "] " + errorToStr(err);
 						addMemoLine(s2);
 						finish(index);
 						break;
@@ -1357,12 +1355,12 @@ void __fastcall TForm1::pingProcess()
 
 					if (!validateChecksum(pICMPbuffer, message_len))
 					{
-						s.printf("ping rx error: checksum");
+						s.printf("rx ping error: checksum");
 						addMemoLine(s);
 						break;
 					}
 
-					s.printf("ping rx received len:%d proto:%u src:%u.%u.%u.%u dst:%u.%u.%u.%u tos:%u ttl:%u",
+					s.printf("rx ping received len:%d proto:%u src:%u.%u.%u.%u dst:%u.%u.%u.%u tos:%u ttl:%u",
 						res,
 						ipHdr.byProtocol,
 						ipHdr.nSrcAddr.ip8[0], ipHdr.nSrcAddr.ip8[1], ipHdr.nSrcAddr.ip8[2], ipHdr.nSrcAddr.ip8[3],
@@ -1373,28 +1371,28 @@ void __fastcall TForm1::pingProcess()
 
 					if (recvHdr.nId != ping[index].tx_header.nId)
 					{
-						s.printf("ping rx error: ID [%d]", recvHdr.nId);
+						s.printf("rx ping error: ID [%d]", recvHdr.nId);
 						addMemoLine(s);
 						break;
 					}
 
 					if (recvHdr.nSequence != ping[index].tx_header.nSequence)
 					{
-						s.printf("ping rx error: sequence [%d]", recvHdr.nSequence);
+						s.printf("rx ping error: sequence [%d]", recvHdr.nSequence);
 						addMemoLine(s);
 						break;
 					}
 
 					if (num_bytes != ping[index].message_size)
 					{
-						s.printf("ping rx error: size [%d]", num_bytes);
+						s.printf("rx ping error: size [%d]", num_bytes);
 						addMemoLine(s);
 						break;
 					}
 
 					if (memcmp(&ping[index].tx_buffer[sizeof(ICMPheader)], &ping[index].rx_buffer[sizeof(IPheader) + sizeof(ICMPheader)], num_bytes) != 0)
 					{
-						s.printf("ping rx error: data");
+						s.printf("rx ping error: data");
 						addMemoLine(s);
 						break;
 					}
@@ -1404,7 +1402,7 @@ void __fastcall TForm1::pingProcess()
 					ping[index].total_round_trip_time += round_trip_time;
 					ping[index].packets_rx++;
 
-					s = "ping rx " + ping[index].ip + ", " + IntToStr(num_bytes) + " bytes, " + FloatToStrF(round_trip_time * 1000, ffFixed, 0, 3) + "ms, TTL " + IntToStr((int)ipHdr.byTtl);
+					s = "rx ping " + ping[index].ip + ", " + IntToStr(num_bytes) + " bytes, " + FloatToStrF(round_trip_time * 1000, ffFixed, 0, 3) + "ms, TTL " + IntToStr((int)ipHdr.byTtl);
 					addMemoLine(s);
 
 					if (ping[index].count < 0)

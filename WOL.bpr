@@ -5,7 +5,7 @@
     <VERSION value="BCB.06.00"/>
     <PROJECT value="WOL.exe"/>
     <OBJFILES value="WOL.obj Unit1.obj"/>
-    <RESFILES value="WOL.res"/>
+    <RESFILES value="WOL.res data.res"/>
     <DEFFILE value=""/>
     <RESDEPEN value="$(RESFILES) Unit1.dfm"/>
     <LIBFILES value=""/>
@@ -51,6 +51,7 @@
       <FILE FILENAME="WOL.res" FORMNAME="" UNITNAME="WOL.res" CONTAINERID="ResTool" DESIGNCLASS="" LOCALCOMMAND=""/>
       <FILE FILENAME="WOL.cpp" FORMNAME="" UNITNAME="WOL" CONTAINERID="CCompiler" DESIGNCLASS="" LOCALCOMMAND=""/>
       <FILE FILENAME="Unit1.cpp" FORMNAME="Form1" UNITNAME="Unit1" CONTAINERID="CCompiler" DESIGNCLASS="" LOCALCOMMAND=""/>
+      <FILE FILENAME="data.res" FORMNAME="" UNITNAME="data.res" CONTAINERID="ResTool" DESIGNCLASS="" LOCALCOMMAND=""/>
   </FILELIST>
   <BUILDTOOLS>
   </BUILDTOOLS>

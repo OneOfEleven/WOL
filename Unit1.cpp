@@ -1414,9 +1414,7 @@ void __fastcall TForm1::pingProcess()
 
 						if (dest_detected_wav.size() > 0)
 						{
-							DWORD flags = SND_MEMORY | SND_NODEFAULT | SND_NOWAIT;
-							flags |= SND_ASYNC;
-							//flags |= CloseOnWakeCheckBox->Checked ? SND_SYNC : SND_ASYNC;
+							DWORD flags = SND_MEMORY | SND_NODEFAULT | SND_NOWAIT | SND_ASYNC;
 							if (::PlaySound(&dest_detected_wav[0], NULL, flags) == FALSE)
 								addMemoLine("play sound error: " + IntToStr((int)GetLastError()));
 						}

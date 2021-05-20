@@ -61,10 +61,10 @@ void __fastcall TForm1::FormCreate(TObject *Sender)
 		//if (::GetUserNameA(username, &size) != FALSE && size > 1)
 		//	ini_filename = ChangeFileExt(Application->ExeName, "_" + String(username) + ".ini");
 		//else
-			ini_filename = ChangeFileExt(Application->ExeName, ".ini");
+			m_ini_filename = ChangeFileExt(Application->ExeName, ".ini");
 	}
 
-	thread = NULL;
+	m_thread = NULL;
 
 	{
 //		srand(time(0));
@@ -73,7 +73,7 @@ void __fastcall TForm1::FormCreate(TObject *Sender)
 		srand(time.wMilliseconds);
 	}
 
-	::GetSystemInfo(&sys_info);
+	::GetSystemInfo(&m_sys_info);
 
 	this->DoubleBuffered  = true;
 	Memo1->DoubleBuffered = true;
@@ -82,49 +82,35 @@ void __fastcall TForm1::FormCreate(TObject *Sender)
 	this->ControlStyle  = this->ControlStyle  << csOpaque;
 	Memo1->ControlStyle = Memo1->ControlStyle << csOpaque;
 
-	dest_detected_wav_filename = IncludeTrailingPathDelimiter(ExtractFilePath(Application->ExeName)) + "dong.wav";
-	//dest_detected_wav_filename = work_dir + "dong.wav";
+	m_dest_detected_wav_filename = IncludeTrailingPathDelimiter(ExtractFilePath(Application->ExeName)) + "dong.wav";
+	//m_dest_detected_wav_filename = work_dir + "dong.wav";
 
 	Memo1->Clear();
 
+	DeviceComboBox->Clear();
 	StatusLabel->Caption = "Resting      ";
 	MACEditA->Text       = "";
 	MACEditB->Text       = "";
-	IPEdit->Text         = "";
-
-	for (int i = 0; i < MAX_DEST; i++)
-	{
-		WOL[i].secs          = -1;
-
-		ping[i].sock         = INVALID_SOCKET;
-		ping[i].stage        = PING_STAGE_NONE;
-		ping[i].id           = rand();
-		ping[i].sequence     = rand();
-		ping[i].source_port  = rand();
-		ping[i].message_size = 32;		// The message size that the ICMP echo request should carry with it
-		ping[i].timeout_ms   = 1000;	// Request time out for echo request (in milliseconds)
-		//ping[i].count      = 3;		// Max number of pings
-		ping[i].count        = -1;		// Ping until we get a reply
-	}
+	AddrEdit->Text       = "";
 
 	loadSettings();
 
 	// initialise WinSock
-	memset(&wsaData, 0, sizeof(wsaData));
-	if (WSAStartup(MAKEWORD(2, 2), &wsaData) == SOCKET_ERROR)
+	memset(&m_wsaData, 0, sizeof(m_wsaData));
+	if (WSAStartup(MAKEWORD(2, 2), &m_wsaData) == SOCKET_ERROR)
 	{
 		const int err = WSAGetLastError();
 		s = "WSAStartup error [" + IntToStr(err) + "] " + errorToStr(err);
 		MessageDlg(s, mtError, TMsgDlgButtons() << mbCancel, 0);
 		Close();
 	}
-	//printfCommMessage("%04X.%04X", wsaData.wVersion, wsaData.wHighVersion);
-	//LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2
+	//printfCommMessage("%04X.%04X", m_wsaData.wVersion, m_wsaData.wHighVersion);
+	//LOBYTE(m_wsaData.wVersion) != 2 || HIBYTE(m_wsaData.wVersion) != 2
 
 	{	// first try to load the external file. if the external file is not present then use the built-in resourced file
-		dest_detected_wav.resize(0);
+		m_dest_detected_wav.resize(0);
 
-		FILE *fin = fopen(AnsiString(dest_detected_wav_filename).c_str(), "rb");
+		FILE *fin = fopen(AnsiString(m_dest_detected_wav_filename).c_str(), "rb");
 		if (fin != NULL)
 		{
 			if (fseek(fin, 0, SEEK_END) == 0)
@@ -134,16 +120,16 @@ void __fastcall TForm1::FormCreate(TObject *Sender)
 				{
 					if (fseek(fin, 0, SEEK_SET) == 0)
 					{
-						dest_detected_wav.resize(file_size);
-						if (fread(&dest_detected_wav[0], 1, file_size, fin) != file_size)
-							dest_detected_wav.resize(0);
+						m_dest_detected_wav.resize(file_size);
+						if (fread(&m_dest_detected_wav[0], 1, file_size, fin) != file_size)
+							m_dest_detected_wav.resize(0);
 					}
 				}
 			}
 			fclose(fin);
 		}
 
-		if (dest_detected_wav.empty())
+		if (m_dest_detected_wav.empty())
 		{	// wav file not loaded .. load it from an included resource
 
 			//for (int i = 0; i < 32767; i++)
@@ -165,8 +151,8 @@ void __fastcall TForm1::FormCreate(TObject *Sender)
 							const VOID *p_res_data = LockResource(res_data);
 							if (p_res_data != NULL)
 							{
-								dest_detected_wav.resize(dwSize);
-								memmove(&dest_detected_wav[0], p_res_data, dwSize);
+								m_dest_detected_wav.resize(dwSize);
+								memmove(&m_dest_detected_wav[0], p_res_data, dwSize);
 							}
 						}
 					}
@@ -184,36 +170,36 @@ void __fastcall TForm1::FormDestroy(TObject *Sender)
 {
 	Timer1->Enabled = false;
 	
-	if (thread != NULL)
+	if (m_thread != NULL)
 	{
-		thread->Terminate();
-		thread->WaitFor();
-		delete thread;
-		thread = NULL;
+		m_thread->Terminate();
+		m_thread->WaitFor();
+		delete m_thread;
+		m_thread = NULL;
 	}
 
-	for (int i = 0; i < MAX_DEST; i++)
+	for (unsigned int i = 0; i < m_device.size(); i++)
 	{
-		if (ping[i].sock != INVALID_SOCKET)
+		if (m_device[i].ping.sock != INVALID_SOCKET)
 		{
-			closesocket(ping[i].sock);
-			ping[i].sock = INVALID_SOCKET;
+			closesocket(m_device[i].ping.sock);
+			m_device[i].ping.sock = INVALID_SOCKET;
 		}
 	}
 
-	if (wsaData.wVersion != 0)
+	if (m_wsaData.wVersion != 0)
 		if (WSACleanup() == SOCKET_ERROR)
 			MessageDlg("WSACleanup() error " + IntToStr(WSAGetLastError()), mtError, TMsgDlgButtons() << mbCancel, 0);
 }
 
 void __fastcall TForm1::FormClose(TObject *Sender, TCloseAction &Action)
 {
-	if (thread != NULL)
+	if (m_thread != NULL)
 	{
-		thread->Terminate();
-		thread->WaitFor();
-		delete thread;
-		thread = NULL;
+		m_thread->Terminate();
+		m_thread->WaitFor();
+		delete m_thread;
+		m_thread = NULL;
 	}
 
 	saveSettings();
@@ -611,32 +597,35 @@ void __fastcall TForm1::WMInitGUI(TMessage &msg)
 //	Timer1->Enabled = true;
 
 	// create & start the thread
-	thread = new CThread(&ThreadProcess, tpNormal, true);
-//	if (thread == NULL)
+	m_thread = new CThread(&ThreadProcess, tpNormal, true);
+//	if (m_thread == NULL)
 //		stop();
 
-	startup_timer.mark();
+	m_startup_timer.mark();
 
-	if (WakeOnStartCheckBox->Checked)
-		wakeyWakey(0);
+	for (unsigned int i = 0; i < m_device.size(); i++)
+		if (m_device[i].wake_on_start)
+			pingStart(i);
 }
 
 void __fastcall TForm1::WMUpdateStatus(TMessage &msg)
 {
-	const int index = msg.WParam;
-
-	switch (index)
+	const unsigned int index = msg.WParam;
+	if (index < m_device.size())
 	{
-		case 0:
-			{
-				const double secs = WOL[index].hires_timer.secs(false);
-				StatusLabel->Caption = IntToStr(IROUND(secs)) + " seconds      ";
-				StatusLabel->Update();
-			}
-			break;
-		default:
-			break;
+		const double secs = m_device[index].hires_timer.secs(false);
+		StatusLabel->Caption = IntToStr(IROUND(secs)) + " seconds      ";
+		StatusLabel->Update();
 	}
+}
+
+void __fastcall TForm1::updateDeviceComboBox()
+{
+	DeviceComboBox->Items->BeginUpdate();
+		DeviceComboBox->Clear();
+		for (unsigned int i = 0; i < m_device.size() ; i++)
+			DeviceComboBox->Items->AddObject(m_device[i].name, (TObject *)i);
+	DeviceComboBox->Items->EndUpdate();
 }
 
 void __fastcall TForm1::loadSettings()
@@ -646,7 +635,7 @@ void __fastcall TForm1::loadSettings()
 	String s;
 	bool b;
 
-	TIniFile *ini = new TIniFile(ini_filename);
+	TIniFile *ini = new TIniFile(m_ini_filename);
 	if (ini == NULL)
 		return;
 
@@ -655,14 +644,45 @@ void __fastcall TForm1::loadSettings()
 	Width  = ini->ReadInteger("MainForm", "Width",  Width);
 	Height = ini->ReadInteger("MainForm", "Height", Height);
 
-	IPEdit->Text   = ini->ReadString("Misc", "IP",   IPEdit->Text);
-	MACEditA->Text = ini->ReadString("Misc", "MACA", MACEditA->Text);
-	MACEditB->Text = ini->ReadString("Misc", "MACB", MACEditB->Text);
+	m_dest_detected_wav_filename = ini->ReadString("Misc", "DEST_DETECTED_WAV", m_dest_detected_wav_filename);
 
-	dest_detected_wav_filename = ini->ReadString("Misc", "DEST_DETECTED_WAV", dest_detected_wav_filename);
+	CloseOnWakeCheckBox->Checked     = ini->ReadBool("Misc", "CloseOnWake",     CloseOnWakeCheckBox->Checked);
+	PlaySoundOnWakeCheckBox->Checked = ini->ReadBool("Misc", "PlaySoundOnWake", PlaySoundOnWakeCheckBox->Checked);
 
-	WakeOnStartCheckBox->Checked = ini->ReadBool("Misc", "WakeOnStart", WakeOnStartCheckBox->Checked);
-	CloseOnWakeCheckBox->Checked = ini->ReadBool("Misc", "CloseOnWake", CloseOnWakeCheckBox->Checked);
+	m_device.clear();
+	for (unsigned int device_num = 0; ; device_num++)
+	{
+		String section = "Device_" + IntToStr(device_num);
+		if (!ini->SectionExists(section))
+			break;
+
+		String name = ini->ReadString(section, "NAME", "");
+		if (!name.IsEmpty())
+		{
+			Device device;
+			device.name          = name;
+			device.addr          = ini->ReadString(section, "ADDR", "");
+			device.mac_1         = ini->ReadString(section, "MAC1", "");
+			device.mac_2         = ini->ReadString(section, "MAC2", "");
+			device.wake_on_start = ini->ReadBool(section, "WakeOnStart", device.wake_on_start);
+			m_device.push_back(device);
+		}
+	}
+
+	updateDeviceComboBox();
+
+	const int device_num = ini->ReadInteger("Device", "Selected", DeviceComboBox->ItemIndex);
+	if (DeviceComboBox->Items->Count > device_num)
+	{
+		DeviceComboBox->ItemIndex = device_num;
+		DeviceComboBoxSelect(DeviceComboBox);
+	}
+	else
+	if (DeviceComboBox->Items->Count > 0)
+	{
+		DeviceComboBox->ItemIndex = 0;
+		DeviceComboBoxSelect(DeviceComboBox);
+	}
 
 	delete ini;
 }
@@ -671,9 +691,9 @@ void __fastcall TForm1::saveSettings()
 {
 	String s;
 
-	DeleteFile(ini_filename);
+	DeleteFile(m_ini_filename);
 
-	TIniFile *ini = new TIniFile(ini_filename);
+	TIniFile *ini = new TIniFile(m_ini_filename);
 	if (ini == NULL)
 		return;
 
@@ -682,14 +702,22 @@ void __fastcall TForm1::saveSettings()
 	ini->WriteInteger("MainForm", "Width",  Width);
 	ini->WriteInteger("MainForm", "Height", Height);
 
-	ini->WriteString("Misc", "IP",   IPEdit->Text);
-	ini->WriteString("Misc", "MACA", MACEditA->Text);
-	ini->WriteString("Misc", "MACB", MACEditB->Text);
+	ini->WriteString("Misc", "DEST_DETECTED_WAV", m_dest_detected_wav_filename);
 
-	ini->WriteString("Misc", "DEST_DETECTED_WAV", dest_detected_wav_filename);
+	ini->WriteBool("Misc", "CloseOnWake",     CloseOnWakeCheckBox->Checked);
+	ini->WriteBool("Misc", "PlaySoundOnWake", PlaySoundOnWakeCheckBox->Checked);
 
-	ini->WriteBool("Misc", "WakeOnStart", WakeOnStartCheckBox->Checked);
-	ini->WriteBool("Misc", "CloseOnWake", CloseOnWakeCheckBox->Checked);
+	for (unsigned int device_num = 0; device_num < m_device.size(); device_num++)
+	{
+		String section = "Device_" + IntToStr(device_num);
+		ini->WriteString(section, "NAME", m_device[device_num].name);
+		ini->WriteString(section, "ADDR", m_device[device_num].addr);
+		ini->WriteString(section, "MAC1", m_device[device_num].mac_1);
+		ini->WriteString(section, "MAC2", m_device[device_num].mac_2);
+		ini->WriteBool(section, "WakeOnStart", m_device[device_num].wake_on_start);
+	}
+
+	ini->WriteInteger("Device", "Selected", DeviceComboBox->ItemIndex);
 
 	delete ini;
 }
@@ -772,7 +800,7 @@ void __fastcall TForm1::FormKeyDown(TObject *Sender, WORD &Key,
 	{
 		case VK_ESCAPE:
 			Key = 0;
-			//if (thread)
+			//if (m_thread)
 			//{
 			//}
 			//else
@@ -798,7 +826,7 @@ void __fastcall TForm1::FormKeyDown(TObject *Sender, WORD &Key,
 
 void __fastcall TForm1::ThreadProcess()
 {
-	if (thread != NULL)
+	if (m_thread != NULL)
 		pingProcess();
 }
 
@@ -963,45 +991,44 @@ bool __fastcall TForm1::StrToMAC(String str, uint8_t *mac)
 	return (numbers == 6 && colons == 5) ? true : false;
 }
 
-void __fastcall TForm1::finish(int index)
+void __fastcall TForm1::finish(const unsigned int index, const t_ping_stage ping_stage)
 {
-	if (index < 0 || index >= MAX_DEST)
+	if (index >= m_device.size())
 		return;
 
-	ping[index].stage = PING_STAGE_NONE;
+	Device *device = &m_device[index];
 
-	if (ping[index].sock != INVALID_SOCKET)
+	device->ping.stage = ping_stage;
+
+	if (device->ping.sock != INVALID_SOCKET)
 	{
-		closesocket(ping[index].sock);
-		ping[index].sock = INVALID_SOCKET;
+		closesocket(device->ping.sock);
+		device->ping.sock = INVALID_SOCKET;
 	}
 
-	WOL[index].secs = -1;
+	device->secs = -1;
+	device->ping.woke_up_timer.mark();
 
-	switch (index)
-	{
-		case 0:
-			WOLButton->Caption   = "Wake Up";
-			StatusLabel->Caption = "Resting      ";
-			MACEditA->Enabled    = true;
-			MACEditB->Enabled    = true;
-			IPEdit->Enabled      = true;
-			break;
-
-		default:
-			break;
-	}
+	WOLButton->Caption           = "Wake Up";
+	DeviceComboBox->Enabled      = true;
+	StatusLabel->Caption         = "Resting      ";
+	MACEditA->Enabled            = true;
+	MACEditB->Enabled            = true;
+	AddrEdit->Enabled            = true;
+	WakeOnStartCheckBox->Enabled = true;
 }
 
-bool __fastcall TForm1::wolSend(String mac_str1, String mac_str2, int index, int repeat_broadcasts)
+bool __fastcall TForm1::wolSend(const unsigned int index, int repeat_broadcasts)
 {
 	uint8_t mac_addr[2][6] = {0};
 
-	if (index < 0 || index >= MAX_DEST)
+	if (index >= m_device.size())
 		return false;
 
-	mac_str1 = mac_str1.Trim();
-	mac_str2 = mac_str2.Trim();
+	Device *device = &m_device[index];
+
+	String mac_str1 = device->mac_1.Trim();
+	String mac_str2 = device->mac_2.Trim();
 
 	if (repeat_broadcasts <  1) repeat_broadcasts = 1;
 	else
@@ -1015,9 +1042,6 @@ bool __fastcall TForm1::wolSend(String mac_str1, String mac_str2, int index, int
 		addMemoLine("error: invalid MAC addr(s)");
 		return false;
 	}
-
-	WOL[index].mac1 = mac_str1;
-	WOL[index].mac2 = mac_str2;
 
 	bool sent = false;
 
@@ -1085,48 +1109,48 @@ bool __fastcall TForm1::wolSend(String mac_str1, String mac_str2, int index, int
 	}
 
 	if (sent)
-		WOL[index].repeat_timer.mark();
+		device->repeat_timer.mark();
 
 	return sent;
 }
 
-bool __fastcall TForm1::pingStart(String addr, int index)
+bool __fastcall TForm1::pingStart(const unsigned int index)
 {
-	if (index < 0 || index >= MAX_DEST)
+	if (index >= m_device.size())
 		return false;
 
-	if (ping[index].stage != PING_STAGE_NONE)
+	if (m_device[index].ping.stage != PING_STAGE_NONE)
 	{
-		ping[index].stage = PING_STAGE_NONE;
+		m_device[index].ping.stage = PING_STAGE_NONE;
 
-		if (ping[index].sock != INVALID_SOCKET)
+		if (m_device[index].ping.sock != INVALID_SOCKET)
 		{
-			closesocket(ping[index].sock);
-			ping[index].sock = INVALID_SOCKET;
+			closesocket(m_device[index].ping.sock);
+			m_device[index].ping.sock = INVALID_SOCKET;
 		}
 	}
 
-	ping[index].addr = addr.Trim();
-	if (ping[index].addr.IsEmpty())
+	String addr = m_device[index].addr.Trim();
+	if (addr.IsEmpty())
 		return false;
 
-	if (!isValidIP(ping[index].addr))
-	{	// not an IP address
-		if (!resolveIP(ping[index].addr, ping[index].ip))
+	if (!isValidIP(addr))
+	{	// not an IP address - must be a DNS address
+		if (!resolveIP(addr, m_device[index].ping.ip))
 		{
-			addMemoLine("Unable to resolve hostname for " + ping[index].addr);
+			addMemoLine("Unable to resolve hostname for " + addr);
 			return false;
 		}
 	}
 	else
-		ping[index].ip = ping[index].addr;
+		m_device[index].ping.ip = addr;
 
-	if (ping[index].ip == "127.0.0.1")
+	if (m_device[index].ping.ip == "127.0.0.1")
 		return false;
 
-	ping[index].stage = PING_STAGE_INIT;
+	m_device[index].ping.stage = PING_STAGE_INIT;
 
-	//while (ping[index].stage != PING_STAGE_NONE)
+	//while (m_device[index].ping.stage != PING_STAGE_NONE)
 	//	pingProcess();
 
 	return true;
@@ -1134,141 +1158,145 @@ bool __fastcall TForm1::pingStart(String addr, int index)
 
 void __fastcall TForm1::pingProcess()
 {
-	for (int index = 0; index < MAX_DEST; index++)
+	for (unsigned int index = 0; index < m_device.size(); index++)
 	{
-		if (!thread)
+		if (!m_thread)
 			return;
 
-		if (WOL[index].secs >= 0.0)
-		{
-			const double secs = WOL[index].hires_timer.secs(false);
-			const double diff = secs - WOL[index].secs;
+		Device *device = &m_device[index];
 
+		const double secs = device->hires_timer.secs(false);
+		const double diff = secs - device->secs;
+
+		if (device->ping.stage != PING_STAGE_NONE && device->ping.stage != PING_STAGE_WOKE_UP)
+		{
 			if (diff >= 1.0)
 			{	// update on-screen timer
-				WOL[index].secs += 1.0;
+				device->secs += 1.0;
 				::PostMessage(this->Handle, WM_UPDATE_STATUS, index, 0);
 			}
-
-			if (ping[index].stage != PING_STAGE_NONE && secs >= 120.0)
-			{	// been pinging for 2 minutes .. time to give up
-				addMemoLine("stopped pinging");
-				finish(index);
-			}
-
-			// send another WOL incase the previous ones weren't heard
-			if (WOL[index].repeat_timer.secs(false) >= WOL_REPEAT_SECS)
-				if (wolSend(WOL[index].mac1, WOL[index].mac2, index, 1))
-					WOL[index].repeat_timer.mark();
 		}
 
-		switch (ping[index].stage)
+		switch (device->ping.stage)
 		{
 			default:
 				addMemoLine("error: unknown ping state [" + IntToStr(index) + "]");
-				finish(index);
+				finish(index, PING_STAGE_NONE);
 				break;
 
 			case PING_STAGE_NONE:
-				if (ping[index].sock != INVALID_SOCKET)
+			case PING_STAGE_WOKE_UP:
+				if (device->ping.sock != INVALID_SOCKET)
 				{
-					closesocket(ping[index].sock);
-					ping[index].sock = INVALID_SOCKET;
+					closesocket(device->ping.sock);
+					device->ping.sock = INVALID_SOCKET;
 				}
 				Sleep(1);
 				break;
 
 			case PING_STAGE_INIT:	// init ping
-				ping[index].tx_buffer.resize(sizeof(ICMPheader) + ping[index].message_size);
-				ping[index].rx_buffer.resize(1500);
+				device->ping.tx_buffer.resize(sizeof(ICMPheader) + device->ping.message_size);
+				device->ping.rx_buffer.resize(1500);
 
-				ping[index].total_round_trip_time = 0;
+				device->ping.total_round_trip_time = 0;
 
-				ping[index].packets_tx = 0;
-				ping[index].packets_rx = 0;
+				device->ping.packets_tx = 0;
+				device->ping.packets_rx = 0;
 
-				ping[index].dest.sin_addr.S_un.S_addr = inet_addr(AnsiString(ping[index].ip).c_str());
-				ping[index].dest.sin_family = AF_INET;
-				ping[index].dest.sin_port = ++ping[index].source_port;		// random source port
+				device->ping.dest.sin_addr.S_un.S_addr = inet_addr(AnsiString(device->ping.ip).c_str());
+				device->ping.dest.sin_family = AF_INET;
+				device->ping.dest.sin_port = ++device->ping.source_port;		// random source port
 
-				ping[index].tx_header.nId       = htons(++ping[index].id);
-				ping[index].tx_header.byCode    = 0;		// zero for ICMP echo and reply messages
-				ping[index].tx_header.nSequence = htons(++ping[index].sequence);
-				ping[index].tx_header.byType    = 8;		// ICMP echo message .. https://www.iana.org/assignments/icmp-parameters/icmp-parameters.xhtml
+				device->ping.tx_header.nId       = htons(++device->ping.id);
+				device->ping.tx_header.byCode    = 0;		// zero for ICMP echo and reply messages
+				device->ping.tx_header.nSequence = htons(++device->ping.sequence);
+				device->ping.tx_header.byType    = 8;		// ICMP echo message .. https://www.iana.org/assignments/icmp-parameters/icmp-parameters.xhtml
 
 				// message bytes - can be anything you want
-				for (int i = 0; i < ping[index].message_size; i++)
-					ping[index].tx_buffer[sizeof(ICMPheader) + i] = rand();
+				for (int i = 0; i < device->ping.message_size; i++)
+					device->ping.tx_buffer[sizeof(ICMPheader) + i] = rand();
 
 				// create a raw ICMP socket
-				ping[index].sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
-				if (ping[index].sock == INVALID_SOCKET)
+				device->ping.sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+				if (device->ping.sock == INVALID_SOCKET)
 				{
 					const int err = WSAGetLastError();
 					String s2 = "tx ping socket create error [" + IntToStr(err) + "] " + errorToStr(err);
 					addMemoLine(s2);
-					finish(index);
+					finish(index, PING_STAGE_NONE);
 					break;
 				}
 
 				// onto next stage
-				ping[index].stage = PING_STAGE_TX;
+				device->ping.stage = PING_STAGE_TX;
 
 				break;
 
 			case PING_STAGE_TX:	// send a ping
-				if (ping[index].sock == INVALID_SOCKET)
+				if (device->ping.sock == INVALID_SOCKET)
 				{
-					finish(index);
+					finish(index, PING_STAGE_NONE);
 					break;
 				}
 
-				if (ping[index].count >= 0 && ping[index].packets_tx >= ping[index].count)
+				if (device->ping.count >= 0 && device->ping.packets_tx >= device->ping.count)
 				{
-					ping[index].stage = PING_STAGE_DONE;
+					device->ping.stage = PING_STAGE_DONE;
 					break;
 				}
+
+				if (secs >= 120.0)
+				{	// been pinging for 2 minutes .. time to give up
+					addMemoLine("no response - stopped pinging");
+					finish(index, PING_STAGE_NONE);
+					break;
+				}
+
+				// send another WOL incase the previous ones weren't heard
+				if (device->repeat_timer.secs(false) >= WOL_REPEAT_SECS)
+					if (wolSend(index, 1))
+						device->repeat_timer.mark();
 
 				{
 					// message bytes - can be anything you want
-					//for (int i = 0; i < ping[index].message_size; i++)
-					//	ping[index].tx_buffer[sizeof(ICMPheader) + i] = rand();
+					//for (int i = 0; i < device->ping.message_size; i++)
+					//	device->ping.tx_buffer[sizeof(ICMPheader) + i] = rand();
 
 					// ICMP header
-					ping[index].tx_header.nSequence = htons(++ping[index].sequence);
-					ping[index].tx_header.nChecksum = 0;
-					memcpy(&ping[index].tx_buffer[0], &ping[index].tx_header, sizeof(ICMPheader));
-					ping[index].tx_header.nChecksum = htons(calcChecksum(&ping[index].tx_buffer[0], sizeof(ICMPheader) + ping[index].message_size));
-					memcpy(&ping[index].tx_buffer[0], &ping[index].tx_header, sizeof(ICMPheader));
+					device->ping.tx_header.nSequence = htons(++device->ping.sequence);
+					device->ping.tx_header.nChecksum = 0;
+					memcpy(&device->ping.tx_buffer[0], &device->ping.tx_header, sizeof(ICMPheader));
+					device->ping.tx_header.nChecksum = htons(calcChecksum(&device->ping.tx_buffer[0], sizeof(ICMPheader) + device->ping.message_size));
+					memcpy(&device->ping.tx_buffer[0], &device->ping.tx_header, sizeof(ICMPheader));
 
-					const int num_bytes = sizeof(ICMPheader) + ping[index].message_size;
+					const int num_bytes = sizeof(ICMPheader) + device->ping.message_size;
 
-					String s = "tx ping " + ping[index].ip + " " + IntToStr(ping[index].packets_tx) + " " + IntToStr(num_bytes);
+					String s = "tx ping " + device->ping.ip + " " + IntToStr(device->ping.packets_tx) + " " + IntToStr(num_bytes);
 
-					const int res = sendto(ping[index].sock, &ping[index].tx_buffer[0], num_bytes, 0, (SOCKADDR *)&ping[index].dest, sizeof(SOCKADDR_IN));
+					const int res = sendto(device->ping.sock, &device->ping.tx_buffer[0], num_bytes, 0, (SOCKADDR *)&device->ping.dest, sizeof(SOCKADDR_IN));
 					if (res == SOCKET_ERROR || res != num_bytes)
 					{
 						const int err = WSAGetLastError();
 						s += " .. error [" + IntToStr(err) + "] " + errorToStr(err);
 						addMemoLine(s);
-						finish(index);
+						finish(index, PING_STAGE_NONE);
 						break;
 					}
 					else
 						addMemoLine(s);
 
 					// save the time at which the ICMP echo message was sent
-					ping[index].hires_timer.mark();
+					device->ping.hires_timer.mark();
 
-					ping[index].packets_tx++;
+					device->ping.packets_tx++;
 
-					ping[index].stage = PING_STAGE_RX;
+					device->ping.stage = PING_STAGE_RX;
 				}
 
 			case PING_STAGE_RX:	// waiting for pong
-				if (ping[index].sock == INVALID_SOCKET)
+				if (device->ping.sock == INVALID_SOCKET)
 				{
-					finish(index);
+					finish(index, PING_STAGE_NONE);
 					break;
 				}
 
@@ -1277,11 +1305,11 @@ void __fastcall TForm1::pingProcess()
 					int res;
 					fd_set fdRead;
 					FD_ZERO(&fdRead);
-					FD_SET(ping[index].sock, &fdRead);
+					FD_SET(device->ping.sock, &fdRead);
 
 					timeval time_interval = {0, 0};
-					time_interval.tv_usec = (ping[index].hires_timer.millisecs(false) < 9) ? 10000 : 0;	// hang around for 10ms after the ping was initially sent
-					//time_interval.tv_usec = ping[index].timeout_ms * 1000;
+					time_interval.tv_usec = (device->ping.hires_timer.millisecs(false) < 9) ? 10000 : 0;	// hang around for 10ms after the ping was initially sent
+					//time_interval.tv_usec = device->ping.timeout_ms * 1000;
 
 					res = select(0, &fdRead, NULL, NULL, &time_interval);
 					if (res == SOCKET_ERROR || res < 0)
@@ -1289,51 +1317,51 @@ void __fastcall TForm1::pingProcess()
 						const int err = WSAGetLastError();
 						String s2 = "rx ping select error [" + IntToStr(err) + "] " + errorToStr(err);
 						addMemoLine(s2);
-						finish(index);
+						finish(index, PING_STAGE_NONE);
 						break;
 					}
 
 					if (res == 0)
 					{
-						if (ping[index].hires_timer.millisecs(false) >= ping[index].timeout_ms)	// timed out ?
+						if (device->ping.hires_timer.millisecs(false) >= device->ping.timeout_ms)	// timed out ?
 						{
 							//addMemoLine("rx ping time out 1");
-							ping[index].stage = (ping[index].count < 0 || ping[index].packets_tx < ping[index].count) ? PING_STAGE_TX : PING_STAGE_DONE;
+							device->ping.stage = (device->ping.count < 0 || device->ping.packets_tx < device->ping.count) ? PING_STAGE_TX : PING_STAGE_DONE;
 						}
 						break;
 					}
 
-					if (!FD_ISSET(ping[index].sock, &fdRead))
+					if (!FD_ISSET(device->ping.sock, &fdRead))
 					{
-						if (ping[index].hires_timer.millisecs(false) >= ping[index].timeout_ms)	// timed out ?
+						if (device->ping.hires_timer.millisecs(false) >= device->ping.timeout_ms)	// timed out ?
 						{
 							//addMemoLine("rx ping time out 1");
-							ping[index].stage = (ping[index].count < 0 || ping[index].packets_tx < ping[index].count) ? PING_STAGE_TX : PING_STAGE_DONE;
+							device->ping.stage = (device->ping.count < 0 || device->ping.packets_tx < device->ping.count) ? PING_STAGE_TX : PING_STAGE_DONE;
 						}
 						break;
 					}
 
-					res = recvfrom(ping[index].sock, &ping[index].rx_buffer[0], ping[index].rx_buffer.size(), 0, 0, 0);
+					res = recvfrom(device->ping.sock, &device->ping.rx_buffer[0], device->ping.rx_buffer.size(), 0, 0, 0);
 					if (res == SOCKET_ERROR || res < 0)
 					{
 						const int err = WSAGetLastError();
 						String s2 = "rx ping recvfrom error [" + IntToStr(err) + "] " + errorToStr(err);
 						addMemoLine(s2);
-						finish(index);
+						finish(index, PING_STAGE_NONE);
 						break;
 					}
 
-					const double round_trip_time = ping[index].hires_timer.secs(false);
+					const double round_trip_time = device->ping.hires_timer.secs(false);
 
 					// construct the IP header from the response
 					IPheader ipHdr;
-					memcpy(&ipHdr, &ping[index].rx_buffer[0], sizeof(IPheader));
+					memcpy(&ipHdr, &device->ping.rx_buffer[0], sizeof(IPheader));
 
 					// ICMP message length is calculated by subtracting the IP header size from the total bytes received
 					const int message_len = res - sizeof(IPheader);
 
 					// skip the header
-					const uint8_t *pICMPbuffer = &ping[index].rx_buffer[sizeof(IPheader)];
+					const uint8_t *pICMPbuffer = &device->ping.rx_buffer[sizeof(IPheader)];
 
 					// extract the ICMP header
 					ICMPheader recvHdr;
@@ -1344,7 +1372,7 @@ void __fastcall TForm1::pingProcess()
 
 					const int num_bytes = res - sizeof(ICMPheader) - sizeof(IPheader);
 
-					if (ping[index].dest.sin_addr.S_un.S_addr != ipHdr.nSrcAddr.ip32)
+					if (device->ping.dest.sin_addr.S_un.S_addr != ipHdr.nSrcAddr.ip32)
 						break;   // not for us
 
 					if (ipHdr.byProtocol != 1)
@@ -1369,28 +1397,28 @@ void __fastcall TForm1::pingProcess()
 						ipHdr.byTtl);
 					addMemoLine(s);
 
-					if (recvHdr.nId != ping[index].tx_header.nId)
+					if (recvHdr.nId != device->ping.tx_header.nId)
 					{
 						s.printf("rx ping error: ID [%d]", recvHdr.nId);
 						addMemoLine(s);
 						break;
 					}
 
-					if (recvHdr.nSequence != ping[index].tx_header.nSequence)
+					if (recvHdr.nSequence != device->ping.tx_header.nSequence)
 					{
 						s.printf("rx ping error: sequence [%d]", recvHdr.nSequence);
 						addMemoLine(s);
 						break;
 					}
 
-					if (num_bytes != ping[index].message_size)
+					if (num_bytes != device->ping.message_size)
 					{
 						s.printf("rx ping error: size [%d]", num_bytes);
 						addMemoLine(s);
 						break;
 					}
 
-					if (memcmp(&ping[index].tx_buffer[sizeof(ICMPheader)], &ping[index].rx_buffer[sizeof(IPheader) + sizeof(ICMPheader)], num_bytes) != 0)
+					if (memcmp(&device->ping.tx_buffer[sizeof(ICMPheader)], &device->ping.rx_buffer[sizeof(IPheader) + sizeof(ICMPheader)], num_bytes) != 0)
 					{
 						s.printf("rx ping error: data");
 						addMemoLine(s);
@@ -1399,23 +1427,29 @@ void __fastcall TForm1::pingProcess()
 
 					// rx ping appears OK
 
-					ping[index].total_round_trip_time += round_trip_time;
-					ping[index].packets_rx++;
+					device->ping.total_round_trip_time += round_trip_time;
+					device->ping.packets_rx++;
 
-					s = "rx ping " + ping[index].ip + ", " + IntToStr(num_bytes) + " bytes, " + FloatToStrF(round_trip_time * 1000, ffFixed, 0, 3) + "ms, TTL " + IntToStr((int)ipHdr.byTtl);
+					device->ping.woke_up_timer.mark();
+
+					s = "rx ping " + device->ping.ip + ", " + IntToStr(num_bytes) + " bytes, " + FloatToStrF(round_trip_time * 1000, ffFixed, 0, 3) + "ms, TTL " + IntToStr((int)ipHdr.byTtl);
 					addMemoLine(s);
 
-					if (ping[index].count < 0)
+					if (device->ping.count < 0)
 					{	// pong rx'ed .. stop pinging
 
 						addMemoLine("woked up");
 
-						finish(index);
+						finish(index, PING_STAGE_WOKE_UP);
 
-						if (dest_detected_wav.size() > 0)
+						if (m_dest_detected_wav.size() > 0 && PlaySoundOnWakeCheckBox->Checked)
 						{
-							DWORD flags = SND_MEMORY | SND_NODEFAULT | SND_NOWAIT | SND_ASYNC;
-							if (::PlaySound(&dest_detected_wav[0], NULL, flags) == FALSE)
+							DWORD flags;
+							//if (m_startup_timer.secs(false) < (5 - 2))
+								flags = SND_MEMORY | SND_NODEFAULT | SND_NOWAIT | SND_ASYNC;	// don't wait till the sound has finished
+							//else
+							//	flags = SND_MEMORY | SND_NODEFAULT | SND_NOWAIT | SND_SYNC;		// wait till the sound has finished
+							if (::PlaySound(&m_dest_detected_wav[0], NULL, flags) == FALSE)
 								addMemoLine("play sound error: " + IntToStr((int)GetLastError()));
 						}
 
@@ -1426,80 +1460,81 @@ void __fastcall TForm1::pingProcess()
 					}
 
 					// keep pinging .. onto next stage
-					ping[index].stage = (ping[index].packets_tx < ping[index].count) ? PING_STAGE_TX : PING_STAGE_DONE;
+					device->ping.stage = (device->ping.packets_tx < device->ping.count) ? PING_STAGE_TX : PING_STAGE_DONE;
 
 					break;
 				}
 
 			case PING_STAGE_DONE:
 				{
-					String s = "Ping " + ping[index].ip + " TX=" + IntToStr(ping[index].packets_tx) + "  RX=" + IntToStr(ping[index].packets_rx);
-					if (ping[index].packets_rx > 0)
+					String s = "Ping " + device->ping.ip + " TX=" + IntToStr(device->ping.packets_tx) + "  RX=" + IntToStr(device->ping.packets_rx);
+					if (device->ping.packets_rx > 0)
 					{
 						String s2;
-						s2.printf("  Time=%0.3fms", (ping[index].total_round_trip_time * 1000) / ping[index].packets_rx);
+						s2.printf("  Time=%0.3fms", (device->ping.total_round_trip_time * 1000) / device->ping.packets_rx);
 						s += s2;
 					}
 					addMemoLine(s);
 				}
-				finish(index);
+				finish(index, PING_STAGE_NONE);
 				break;
 		}
 	}
 
-	if (startup_timer.secs(false) >= 5 && CloseOnWakeCheckBox->Checked)
+	if (CloseOnWakeCheckBox->Checked)
 	{
-		bool close = true;
-		for (int index = 0; index < MAX_DEST && close; index++)
-			if (ping[index].stage != PING_STAGE_NONE)
-				close = false;
+		bool close = false;
+		for (unsigned int i = 0; i < m_device.size(); i++)
+		{
+			Device *device = &m_device[i];
+			if (device->ping.stage == PING_STAGE_WOKE_UP && device->ping.woke_up_timer.secs(false) >= 3.0)
+				close = true;
+		}
 		if (close)
-			::PostMessage(this->Handle, WM_CLOSE, 0, 0);
+			::PostMessage(this->Handle, WM_CLOSE, 0, 0);		// close this program
 	}
 }
 
-void __fastcall TForm1::wakeyWakey(const int index)
+void __fastcall TForm1::wakeyWakey(const unsigned int index)
 {
-	if (index < 0 || index >= MAX_DEST)
+	if (index >= m_device.size())
 		return;
 
-	if (ping[index].stage != PING_STAGE_NONE)
-	{
-		finish(index);
-		return;
-	}
+	Device *device = &m_device[index];
+
+	if (device->ping.stage != PING_STAGE_NONE)
+		finish(index, PING_STAGE_NONE);
 
 	StatusLabel->Caption = "Resting      ";
 	addMemoLine("");
 
-	if (wolSend(MACEditA->Text, MACEditB->Text, index, 1))
+	if (wolSend(index, 1))
 	{
-		WOL[index].hires_timer.mark();
-		WOL[index].secs = 0;
+		device->hires_timer.mark();
+		device->secs = 0;
 
-		switch (index)
-		{
-			case 0:
-				StatusLabel->Caption = "0 seconds      ";
-				StatusLabel->Update();
-				break;
-			default:
-				break;
-		}
+		StatusLabel->Caption = "0 seconds      ";
+		StatusLabel->Update();
 
-		if (pingStart(IPEdit->Text, index))
+		if (pingStart(index))
 		{
-			MACEditA->Enabled  = false;
-			MACEditB->Enabled  = false;
-			IPEdit->Enabled    = false;
-			WOLButton->Caption = "Stop";
+			DeviceComboBox->Enabled      = false;
+			MACEditA->Enabled            = false;
+			MACEditB->Enabled            = false;
+			AddrEdit->Enabled            = false;
+			WakeOnStartCheckBox->Enabled = false;
+			WOLButton->Caption           = "Stop";
 		}
 	}
 }
 
 void __fastcall TForm1::WOLButtonClick(TObject *Sender)
 {
-	wakeyWakey(0);
+	const int device_num = DeviceComboBox->ItemIndex;
+	if (device_num < 0)
+		return;
+
+	wakeyWakey(device_num);
 }
 
 void __fastcall TForm1::Memo1DblClick(TObject *Sender)
@@ -1518,6 +1553,191 @@ void __fastcall TForm1::Timer1Timer(TObject *Sender)
 			Memo1->Lines->Add(s);
 			if (++num_done >= 10)	// max of 10 lines in one go - to give time for the rest of the system to do it's thing
 				break;
+		}
+	}
+}
+
+void __fastcall TForm1::DeviceComboBoxChange(TObject *Sender)
+{
+	String s = DeviceComboBox->Text.Trim().LowerCase();
+
+	// check to see if it exists
+	unsigned int i = 0;
+	while (i < m_device.size())
+	{
+		if (m_device[i].name.LowerCase() == s)
+			break;
+		i++;
+	}
+
+	if (i < m_device.size())
+	{	// it exists
+		AddrEdit->Text               = m_device[i].addr.Trim();
+		MACEditA->Text               = m_device[i].mac_1.Trim();
+		MACEditB->Text               = m_device[i].mac_2.Trim();
+		WakeOnStartCheckBox->Checked = m_device[i].wake_on_start;
+	}
+}
+
+void __fastcall TForm1::SaveButtonClick(TObject *Sender)
+{
+	String s = DeviceComboBox->Text.Trim();
+	if (s.IsEmpty())
+		return;
+		
+	// check to see if it already exists
+	unsigned int i = 0;
+	while (i < m_device.size())
+	{
+		if (m_device[i].name.LowerCase() == s.LowerCase())
+			break;
+		i++;
+	}
+
+	if (i < m_device.size())
+	{	// it already exists .. update the entry
+		m_device[i].name          = s;
+		m_device[i].addr          = AddrEdit->Text.Trim();
+		m_device[i].mac_1         = MACEditA->Text.Trim();
+		m_device[i].mac_2         = MACEditB->Text.Trim();
+		m_device[i].wake_on_start = WakeOnStartCheckBox->Checked;
+	}
+	else
+	{	// add a new entry
+		Device device;
+		device.name          = s;
+		device.addr          = AddrEdit->Text.Trim();
+		device.mac_1         = MACEditA->Text.Trim();
+		device.mac_2         = MACEditB->Text.Trim();
+		device.wake_on_start = WakeOnStartCheckBox->Checked;
+		m_device.push_back(device);
+
+		DeviceComboBox->Items->BeginUpdate();
+			DeviceComboBox->Items->AddObject(s, (TObject *)i);
+		DeviceComboBox->Items->EndUpdate();
+		DeviceComboBox->ItemIndex = i - 1;
+	}
+}
+
+void __fastcall TForm1::DeleteButtonClick(TObject *Sender)
+{
+	String s = DeviceComboBox->Text.Trim().LowerCase();
+	if (s.IsEmpty())
+		return;
+
+	const int device_num = DeviceComboBox->ItemIndex;
+
+	for (unsigned int i = 0; i < m_device.size(); )
+	{
+		if (m_device[i].name.LowerCase() == s)
+			m_device.erase(m_device.begin() + i);
+		else
+			i++;
+	}
+
+	updateDeviceComboBox();
+
+	if (device_num >= 0)
+	{
+		if (DeviceComboBox->Items->Count > device_num)
+		{
+			DeviceComboBox->ItemIndex = device_num;
+			DeviceComboBoxSelect(DeviceComboBox);
+		}
+		else
+		if (DeviceComboBox->Items->Count > 0)
+		{
+			DeviceComboBox->ItemIndex = 0;
+			DeviceComboBoxSelect(DeviceComboBox);
+		}
+	}
+	else
+	{
+		if (DeviceComboBox->Items->Count > 0)
+		{
+			DeviceComboBox->ItemIndex = 0;
+			DeviceComboBoxSelect(DeviceComboBox);
+		}
+	}
+}
+
+void __fastcall TForm1::DeviceComboBoxSelect(TObject *Sender)
+{
+	String s = DeviceComboBox->Text.Trim().LowerCase();
+
+	// check to see if it exists
+	unsigned int i = 0;
+	while (i < m_device.size())
+	{
+		if (m_device[i].name.LowerCase() == s)
+			break;
+		i++;
+	}
+
+	if (i < m_device.size())
+	{	// it exists
+		MACEditA->Text               = m_device[i].mac_1.Trim();
+		MACEditB->Text               = m_device[i].mac_2.Trim();
+		AddrEdit->Text               = m_device[i].addr.Trim();
+		WakeOnStartCheckBox->Checked = m_device[i].wake_on_start;
+	}
+}
+
+void __fastcall TForm1::CloseOnWakeCheckBoxClick(TObject *Sender)
+{
+	for (unsigned int i = 0; i < m_device.size(); i++)
+	{
+		Device *device = &m_device[i];
+		device->ping.woke_up_timer.mark();
+	}
+}
+
+void __fastcall TForm1::WakeOnStartCheckBoxClick(TObject *Sender)
+{
+	SaveButtonClick(SaveButton);
+}
+
+
+void __fastcall TForm1::AddrEditKeyDown(TObject *Sender, WORD &Key,
+		TShiftState Shift)
+{
+	SaveButtonClick(SaveButton);
+}
+
+void __fastcall TForm1::MACEditBKeyDown(TObject *Sender, WORD &Key,
+		TShiftState Shift)
+{
+	SaveButtonClick(SaveButton);
+}
+
+void __fastcall TForm1::MACEditAKeyDown(TObject *Sender, WORD &Key,
+      TShiftState Shift)
+{
+	SaveButtonClick(SaveButton);
+}
+
+void __fastcall TForm1::DeviceComboBoxKeyDown(TObject *Sender, WORD &Key,
+      TShiftState Shift)
+{
+	if (Key == VK_RETURN)
+	{
+		Key = 0;
+
+		String s = DeviceComboBox->Text.Trim();
+		if (!s.IsEmpty())
+		{
+			SaveButtonClick(SaveButton);
+
+			// find it
+			unsigned int i = 0;
+			while (i < m_device.size())
+			{
+				if (m_device[i].name.LowerCase() == s.LowerCase())
+					break;
+				i++;
+			}
+			if (i < m_device.size())
+				DeviceComboBox->ItemIndex = i;
 		}
 	}
 }

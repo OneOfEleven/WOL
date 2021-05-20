@@ -29,7 +29,15 @@
 #define WM_INIT_GUI        (WM_USER + 100)
 #define WM_UPDATE_STATUS   (WM_USER + 101)
 
-#define MAX_DEST 2
+enum t_ping_stage
+{
+	PING_STAGE_NONE = 0,
+	PING_STAGE_INIT,
+	PING_STAGE_TX,
+	PING_STAGE_RX,
+	PING_STAGE_WOKE_UP,
+	PING_STAGE_DONE
+} t_ping_sstage;
 
 struct TVersion
 {
@@ -71,14 +79,62 @@ struct IPheader
 	} nDestAddr;
 };
 
-enum t_ping_stage
+struct Device
 {
-	PING_STAGE_NONE = 0,
-	PING_STAGE_INIT = 1,
-	PING_STAGE_TX   = 2,
-	PING_STAGE_RX   = 3,
-	PING_STAGE_DONE = 4
-} t_ping_sstage;
+	String              name;
+	String              addr;
+	String              mac_1;
+	String              mac_2;
+
+	double              secs;
+
+	bool                wake_on_start;
+
+	CHighResolutionTick hires_timer;
+	CHighResolutionTick repeat_timer;
+
+	struct
+	{
+		SOCKET                sock;
+		String                ip;
+		int                   stage;
+		int                   id;
+		int                   sequence;
+		uint16_t              source_port;
+		int                   message_size;
+		int                   timeout_ms;
+		int                   count;
+		double                total_round_trip_time;
+		int                   packets_tx;
+		int                   packets_rx;
+		std::vector <uint8_t> tx_buffer;
+		std::vector <uint8_t> rx_buffer;
+		ICMPheader            tx_header;
+		SOCKADDR_IN           dest;
+		CHighResolutionTick   hires_timer;
+		CHighResolutionTick   woke_up_timer;
+	} ping;
+
+	Device()
+	{
+		secs                       = -1.0;
+		wake_on_start              = false;
+		ping.sock                  = INVALID_SOCKET;
+		ping.stage                 = PING_STAGE_NONE;
+		ping.id                    = rand();
+		ping.sequence              = rand();
+		ping.source_port           = rand();
+		ping.message_size          = 32;		// The message size that the ICMP echo request should carry with it
+		ping.timeout_ms            = 1000;	// Request time out for echo request (in milliseconds)
+		//ping.count               = 100;	// Max number of pings
+		ping.count                 = -1;		// Ping until we get a reply
+		ping.total_round_trip_time = 0.0;
+		ping.packets_tx            = 0;
+		ping.packets_rx            = 0;
+		memset(&ping.tx_header, 0, sizeof(ping.tx_header));
+		memset(&ping.dest, 0, sizeof(ping.dest));
+	}
+};
 
 typedef void __fastcall (__closure *mainForm_threadProcess)();
 
@@ -134,11 +190,16 @@ __published:	// IDE-managed Components
 	TLabel *Label1;
 	TEdit *MACEditB;
 	TLabel *Label3;
-	TEdit *IPEdit;
+	TEdit *AddrEdit;
 	TMemo *Memo1;
 	TCheckBox *WakeOnStartCheckBox;
 	TCheckBox *CloseOnWakeCheckBox;
 	TTimer *Timer1;
+	TCheckBox *PlaySoundOnWakeCheckBox;
+	TLabel *Label4;
+	TComboBox *DeviceComboBox;
+	TButton *SaveButton;
+	TButton *DeleteButton;
 	void __fastcall FormCreate(TObject *Sender);
 	void __fastcall FormDestroy(TObject *Sender);
 	void __fastcall FormClose(TObject *Sender, TCloseAction &Action);
@@ -147,17 +208,39 @@ __published:	// IDE-managed Components
 	void __fastcall WOLButtonClick(TObject *Sender);
 	void __fastcall Memo1DblClick(TObject *Sender);
 	void __fastcall Timer1Timer(TObject *Sender);
+	void __fastcall DeviceComboBoxChange(TObject *Sender);
+	void __fastcall SaveButtonClick(TObject *Sender);
+	void __fastcall DeleteButtonClick(TObject *Sender);
+	void __fastcall DeviceComboBoxSelect(TObject *Sender);
+	void __fastcall CloseOnWakeCheckBoxClick(TObject *Sender);
+	void __fastcall WakeOnStartCheckBoxClick(TObject *Sender);
+	void __fastcall AddrEditKeyDown(TObject *Sender, WORD &Key,
+          TShiftState Shift);
+	void __fastcall MACEditBKeyDown(TObject *Sender, WORD &Key,
+          TShiftState Shift);
+	void __fastcall MACEditAKeyDown(TObject *Sender, WORD &Key,
+          TShiftState Shift);
+	void __fastcall DeviceComboBoxKeyDown(TObject *Sender, WORD &Key,
+          TShiftState Shift);
 
-private:	// User declarations
-	String work_dir;
-	String ini_filename;
+private:
+	String                m_work_dir;
+	String                m_ini_filename;
 
-	SYSTEM_INFO sys_info;
+	SYSTEM_INFO           m_sys_info;
 
-	String dest_detected_wav_filename;
-	std::vector <uint8_t> dest_detected_wav;
+	String                m_dest_detected_wav_filename;
+	std::vector <uint8_t> m_dest_detected_wav;
 
-	CHighResolutionTick startup_timer;
+	CHighResolutionTick   m_startup_timer;
+
+	WSADATA               m_wsaData;
+
+	std::vector <Device>  m_device;
+
+	CThread              *m_thread;
+
+	CRITICAL_SECTION      m_cs;
 
 	struct
 	{
@@ -165,43 +248,8 @@ private:	// User declarations
 		std::vector <String> list;
 	} m_messages;
 
-	WSADATA wsaData;
-
-	struct
-	{
-		String              mac1;
-		String              mac2;
-		double              secs;
-		CHighResolutionTick hires_timer;
-		CHighResolutionTick repeat_timer;
-	} WOL[MAX_DEST];
-
-	struct
-	{
-		SOCKET                sock;
-		String                addr;
-		String                ip;
-		int                   stage;
-		int                   id;
-		int                   sequence;
-		uint16_t              source_port;
-		int                   message_size;
-		int                   timeout_ms;
-		int                   count;
-		double                total_round_trip_time;
-		int                   packets_tx;
-		int                   packets_rx;
-		std::vector <uint8_t> tx_buffer;
-		std::vector <uint8_t> rx_buffer;
-		ICMPheader            tx_header;
-		SOCKADDR_IN           dest;
-		CHighResolutionTick   hires_timer;
-	} ping[MAX_DEST];
-
-	CThread *thread;
-
-	CRITICAL_SECTION criticalSection;
-
+	void __fastcall updateDeviceComboBox();
+	
 	bool __fastcall GetBuildInfo(String filename, TVersion *version);
 
 	bool __fastcall createPath(const char *path);
@@ -237,14 +285,14 @@ private:	// User declarations
 
 	bool __fastcall StrToMAC(String str, uint8_t *mac);
 
-	void __fastcall finish(int index);
+	void __fastcall finish(const unsigned int index, const t_ping_stage ping_stage);
 
-	bool __fastcall wolSend(String mac_str1, String mac_str2, int index, int repeat_broadcasts = 1);
+	bool __fastcall wolSend(const unsigned int index, int repeat_broadcasts = 1);
 
-	bool __fastcall pingStart(String addr, int index);
+	bool __fastcall pingStart(const unsigned int index);
 	void __fastcall pingProcess();
 
-	void __fastcall wakeyWakey(const int index);
+	void __fastcall wakeyWakey(const unsigned int index);
 
 protected:
 
